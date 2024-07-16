@@ -34,26 +34,43 @@ class Duvida:
         except Exception as e:
             print(f'Erro na conexão {e}')
 
-    def verificar_entities_duvida(self, lista_sql, lista_azurite):
-        trigger = False
-        inserir_azurite = []
-        for elemento_sql in lista_sql:
-            trigger = False
-            for elemento_azurite in lista_azurite:
-                if elemento_sql['RowKey'] == elemento_azurite['RowKey']:
-                    trigger = True
-                    if elemento_sql['Questionamento'] == elemento_azurite['Questionamento'] and elemento_sql['Ativo'] == elemento_azurite['Ativo'] and elemento_sql['ETag'] == elemento_azurite['ETag']:
-                        pass
-                    else:
-                        inserir_azurite.append(elemento_sql)
-            if trigger == False:
-                inserir_azurite.append(elemento_sql)
-        return inserir_azurite
-    
-    def inserindo_partition_key_duvida(self, partition_key, lista_para_inserir_azure):
+    def inserindo_partition_key(self, partition_key, objeto):
         novo_campo = OrderedDict([('PartitionKey', partition_key)])
-        for elemento in lista_para_inserir_azure:
-            elemento.update(novo_campo)
+        objeto.update(novo_campo)
+
+    def inserir_etag(self, etag, objeto):
+        novo_campo = OrderedDict([('Etag', etag)])
+        objeto.update(novo_campo)
+
+    def verificar_entities(self, lista_sql, lista_azurite, partition_key):
+        lista_para_enviar_azure = []
+        inserir = False
+        #se lista azurite vazia monta os objetos e os adiciona para inserir
+        if not lista_azurite:
+            for elemento in lista_sql:
+                self.inserindo_partition_key(partition_key, elemento)
+                self.inserir_etag(elemento['Ativo'], elemento)
+                lista_para_enviar_azure.append(elemento)
+        else:
+            for elemento_sql in lista_sql:
+                for elemento_azurite in lista_azurite:
+                    if elemento_sql['RowKey'] == elemento_azurite['RowKey']:
+                        if elemento_sql['Questionamento'] == elemento_azurite['Questionamento'] and elemento_sql['Ativo'] == elemento_azurite['Ativo']:
+                            inserir = False
+                            break
+                    inserir = True
+                    
+                if inserir == True:
+                    lista_para_enviar_azure.append(elemento_sql)
+            
+            for elemento in lista_para_enviar_azure:
+                self.inserindo_partition_key(partition_key, elemento)
+                self.inserir_etag(elemento['Ativo'], elemento)
+                if 'Etag' in elemento:
+                    self.inserir_etag(elemento['Ativo'], elemento)
+
+        return lista_para_enviar_azure
+    
     
     def ler_entidade_retorna_lista(self, entities):
         lista_azurite = []
@@ -86,12 +103,10 @@ class Duvida:
                     print(f'falha ao inserir {entity}: {str(e)}')
 
     def atualiza_tabela_duvida(self):
-        #acessando banco sql e azure tabela Duvida
         partition_key_duvida = "74f40075-1d24-45ef-b984-b9e58e3332c7"
         lista_sql = self.conexao_sql_duvida(self.str_sql)
         lista_azurite, table_client = self.conexao_azure_storage(self.str_azurite, self.str_nome_tabela)
         if lista_sql is not None:
             self.converter_rowkey_para_string(lista_sql)
-        lista_para_inserir = self.verificar_entities_duvida(lista_sql, lista_azurite)    
-        self.inserindo_partition_key_duvida(partition_key_duvida, lista_para_inserir)
+        lista_para_inserir = self.verificar_entities(lista_sql, lista_azurite, partition_key_duvida)    
         self.enviando_azure(lista_para_inserir, table_client)

@@ -3,23 +3,25 @@ import pandas as pd
 from collections import OrderedDict
 from azure.data.tables import TableServiceClient
 
-class Fale_conosco:
+class Sub_Fale_Conosco:
     
     def __init__(self, str_sql, str_azurite, str_nome_tabela):
         self.str_sql = str_sql
         self.str_azurite = str_azurite
         self.str_nome_tabela = str_nome_tabela
 
-    def conexao_sql_fale_conosco(self, str_sql):
+    def conexao_sql(self, str_sql):
         try:
             connection = pyodbc.connect(str_sql)
             query_sql = """
                     SELECT 
-                        [idCategoria] as RowKey
-                        ,[Nome] as Categoria
+                        [idSubcategoria] as RowKey
+                        ,[idCategoria] As FaleConosco
+                        ,[Nome] as SubCategoria
+                        ,[Contato]
                         ,[Ativo]
                     FROM 
-                        [RECEITA].[dbo].[FALE_CONOSCO_CATEGORIA]
+                        [RECEITA].[dbo].[FALE_CONOSCO_SUBCATEGORIA]
                 """
             df = pd.read_sql(query_sql, connection)
             connection.close()
@@ -27,31 +29,47 @@ class Fale_conosco:
         except Exception as e:
             print(f'Erro na conexão {e}')
 
-    def inserindo_etag_fale_conosco(self, etag, lista_para_inserir_azure):
+    def inserir_etag(self, etag, objeto):
         novo_campo = OrderedDict([('Etag', etag)])
-        for elemento in lista_para_inserir_azure:
-            elemento.update(novo_campo)
+        objeto.update(novo_campo)
             
-    def verificar_entities_fale_conosco(self, lista_sql, lista_azurite):
-        trigger = False
-        inserir_azurite = []
-        for elemento_sql in lista_sql:
-            trigger = False
-            for elemento_azurite in lista_azurite:
-                if elemento_sql['RowKey'] == elemento_azurite['RowKey']:
-                    trigger = True
-                    if elemento_sql['Categoria'] == elemento_azurite['Categoria'] and elemento_sql['Ativo'] == elemento_azurite['Ativo']:
-                        pass
-                    else:
-                        inserir_azurite.append(elemento_sql)
-            if trigger == False:
-                inserir_azurite.append(elemento_sql)
-        return inserir_azurite
-    
-    def inserindo_partition_key_fale_conosco(self, partition_key, lista_para_inserir_azure):
+    def inserir_partition_key(self, partition_key, objeto):
         novo_campo = OrderedDict([('PartitionKey', partition_key)])
-        for elemento in lista_para_inserir_azure:
-            elemento.update(novo_campo)
+        objeto.update(novo_campo)
+    
+    def inserir_fale_conosco_pk(self, partition_key, objeto):
+        novo_campo = OrderedDict([('FaleConosoPK', partition_key)])
+        objeto.update(novo_campo)
+
+    def verificar_entities(self, lista_sql, lista_azurite, partition_key):
+        lista_para_enviar_azure = []
+        inserir = False
+
+        if not lista_azurite:
+            for elemento in lista_sql:
+                self.inserir_partition_key(partition_key, elemento)
+                self.inserir_fale_conosco_pk(partition_key, elemento)
+                self.inserir_etag(elemento['Ativo'], elemento)
+                lista_para_enviar_azure.append(elemento)
+        else:
+            for elemento_sql in lista_sql:
+                for elemento_azurite in lista_azurite:
+                    if elemento_sql['RowKey'] == elemento_azurite['RowKey']:
+                        if elemento_sql['FaleConosco'] == elemento_azurite['FaleConosco'] and elemento_sql['SubCategoria'] == elemento_azurite['SubCategoria'] and elemento_sql['Contato'] == elemento_azurite['Contato'] and elemento_sql['Ativo'] == elemento_azurite['Ativo']:
+                            inserir = False
+                            break
+                    inserir = True
+
+                if inserir == True:
+                    lista_para_enviar_azure.append(elemento_sql)
+
+            for elemento in lista_para_enviar_azure:
+                self.inserir_partition_key(partition_key, elemento)
+                self.inserir_fale_conosco_pk(partition_key, elemento)
+                if 'Etag' in elemento:
+                    self.inserir_etag(elemento['Ativo'], elemento)
+
+        return lista_para_enviar_azure
     
     def ler_entidade_retorna_lista(self, entities):
         lista_azurite = []
@@ -83,14 +101,14 @@ class Fale_conosco:
                 except Exception as e:
                     print(f'falha ao inserir {entity}: {str(e)}')
 
-    def atualiza_tabela_fale_conosco(self):
+    def atualiza_tabela_sub_fale_conosco(self):
+        partition_key_sub_fale_conosco = "ff1a6a8c-17ce-4741-b4d8-e466c4a16518"
+        fale_conosco_pk = 'c124bab6-7011-4cfb-8ca9-4934b45e30f5'
+        
         #acessando banco sql e azure tabela Duvida
-        partition_key_duvida = "c124bab6-7011-4cfb-8ca9-4934b45e30f5"
-        lista_sql = self.conexao_sql_fale_conosco(self.str_sql)
+        lista_sql = self.conexao_sql(self.str_sql)
         lista_azurite, table_client = self.conexao_azure_storage(self.str_azurite, self.str_nome_tabela)
         if lista_sql is not None:
             self.converter_rowkey_para_string(lista_sql)
-        lista_para_inserir = self.verificar_entities_fale_conosco(lista_sql, lista_azurite)    
-        self.inserindo_partition_key_fale_conosco(partition_key_duvida, lista_para_inserir)
-        self.inserindo_etag_fale_conosco('S', lista_para_inserir)
+        lista_para_inserir = self.verificar_entities(lista_sql, lista_azurite, partition_key_sub_fale_conosco)
         self.enviando_azure(lista_para_inserir, table_client)
